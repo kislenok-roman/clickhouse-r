@@ -27,7 +27,7 @@
 \dontrun{
 library(DBI)
 con <- dbConnect(clickhouse::clickhouse())
-dbWriteTable(con, "iris", mtcars)
+dbWriteTable(con, "mtcars", mtcars)
 dbListTables(con)
 dbGetQuery(con, "SELECT COUNT(*) FROM mtcars")
 d <- dbReadTable(con, "mtcars")
