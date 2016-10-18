@@ -41,11 +41,9 @@ clickhouse <- function() {
 }
 
 setMethod("dbConnect", "clickhouse_driver",
-  function(drv, dbname = "", ...) {
-    stopifnot(length(dbname) == 1, !is.na(dbname))
-    # TODO: basic auth or query for user / password params
+  function(drv, host="localhost", port=8123L, user="default", password="", ...) {
     con <- new("clickhouse_connection",
-      url = "http://localhost:8123/"
+      url = paste0("http://", user, ":", password, "@", host, ":", port, "/")
     )
     stopifnot(dbIsValid(con))
     con
@@ -80,7 +78,6 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
 		q <- paste0(q ," FORMAT TabSeparatedWithNames")
 	}
 
-	# TODO: deal with authentication
 	h <- curl::new_handle()
 	curl::handle_setopt(h, copypostfields = q)
 	req <- curl::curl_fetch_memory(conn@url, handle = h)
@@ -149,7 +146,6 @@ setMethod("dbWriteTable", signature(conn="clickhouse_connection", name = "charac
     write.table(value, textConnection("value_str", open="w"), sep="\t", row.names=F, col.names=F)
     value_str2 <- paste0(get("value_str"), collapse="\n")
 
-    # TODO: deal with authentication
 	h <- curl::new_handle()
 	curl::handle_setopt(h, copypostfields = value_str2)
 	req <- curl::curl_fetch_memory(paste0(conn@url, "?query=",URLencode(paste0("INSERT INTO ", qname, " FORMAT TabSeparated"))), handle = h)

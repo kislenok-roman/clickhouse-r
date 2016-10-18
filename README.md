@@ -16,7 +16,7 @@ If you encounter a bug, please file a minimal reproducible example on [github](h
 
 ```R
 library(DBI)
-con <- dbConnect(clickhouse::clickhouse())
+con <- dbConnect(clickhouse::clickhouse(), host="localhost", port=8123L, user="default", password="")
 dbWriteTable(con, "mtcars", mtcars)
 dbListTables(con)
 dbGetQuery(con, "SELECT COUNT(*) FROM mtcars")

@@ -26,7 +26,7 @@
 \examples{
 \dontrun{
 library(DBI)
-con <- dbConnect(clickhouse::clickhouse())
+con <- dbConnect(clickhouse::clickhouse(), host="localhost", port=8123L, user="default", password="")
 dbWriteTable(con, "mtcars", mtcars)
 dbListTables(con)
 dbGetQuery(con, "SELECT COUNT(*) FROM mtcars")
