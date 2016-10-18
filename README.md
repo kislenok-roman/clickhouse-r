@@ -10,7 +10,7 @@ This R package provides a DBI client for the ClickHouse database
     devtools::install_github("hannesmuehleisen/clickhouse-r")
     ```
 
-If you encounter a bug, please file a minimal reproducible example on [github](https://hannesmuehleisen/clickhouse-r/issues).
+If you encounter a bug, please file a minimal reproducible example on [github](https://github.com/hannesmuehleisen/clickhouse-r/issues).
 
 ## Usage
 
