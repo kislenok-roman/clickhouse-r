@@ -1,0 +1,22 @@
+Package: clickhouse
+Version: 0.0.1
+Title: clickhouse Interface for R
+Author: Hannes Muehleisen [aut, cre]
+Maintainer: Hannes Muehleisen <hannes@cwi.nl>
+Description: This package provoides an interface to the clickhouse database compliant with the DBI package.
+Depends:
+    R (>= 3.1.0)
+Suggests:
+    testthat,
+    DBItest
+Imports:
+    methods,
+    DBI (>= 0.5),
+    curl,
+    data.table
+Encoding: UTF-8
+License: LGPL (>= 2)
+URL: https://github.com/hannesmuehleisen/clickhouse-r
+BugReports: https://github.com/hannesmuehleisen/clickhouse-r/issues
+Collate:
+    'clickhouse.R'
