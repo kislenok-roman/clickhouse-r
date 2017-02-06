@@ -88,7 +88,13 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
 
 	dataenv <- new.env(parent = emptyenv())
 	if (has_resultset) {
-		dataenv$data <- data.table::fread(rawToChar(req$content), sep="\t", header=TRUE, showProgress=FALSE)
+		# try to avoid problems when select just one column that can contain ""
+		# without "blank.lines.skip" we'll get warning: 
+		# Stopped reading at empty line ... but text exists afterwards (discarded): ...
+		# and not all rows will be read 
+		dataenv$data <- data.table::fread(rawToChar(req$content), sep="\t", header=TRUE, 
+						  showProgress=FALSE,
+						  blank.lines.skip = TRUE)
 	}
 	dataenv$success <- TRUE
 
