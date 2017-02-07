@@ -67,8 +67,12 @@ setMethod("dbRemoveTable", "clickhouse_connection", function(conn, name, ...) {
 	invisible(TRUE)
 })
 
-setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...) {
-	q <- sub("[; ]*;\\s*$", "", statement, ignore.case=T, perl=T)
+setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, use = c("memory", "temp"), ...) {
+  # with use = "temp" we try to avoid exception with long vectors conversion in rawToChar
+  # <simpleError in rawToChar(req$content): long vectors are not supported yet: raw.c:68>
+  use <- match.arg(use)
+
+  q <- sub("[; ]*;\\s*$", "", statement, ignore.case=T, perl=T)
 	has_resultset <- grepl("^\\s*(SELECT|SHOW)\\s+", statement, perl=T, ignore.case=T)
 
 	if (has_resultset) {
@@ -80,21 +84,38 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
 
 	h <- curl::new_handle()
 	curl::handle_setopt(h, copypostfields = q)
-	req <- curl::curl_fetch_memory(conn@url, handle = h)
+
+	if (use == "memory") {
+	  req <- curl::curl_fetch_memory(conn@url, handle = h)
+	} else {
+	  tmp <- tempfile()
+	  req <- curl::curl_fetch_disk(conn@url, tmp, handle = h)
+	}
 
 	if (req$status_code != 200) {
-		stop(rawToChar(req$content))
-	} 
+	  if (use == "memory") {
+		  stop(rawToChar(req$content))
+	  } else {
+	    stop(readLines(tmp))
+	  }
+	}
 
 	dataenv <- new.env(parent = emptyenv())
 	if (has_resultset) {
 		# try to avoid problems when select just one column that can contain ""
-		# without "blank.lines.skip" we'll get warning: 
+		# without "blank.lines.skip" we'll get warning:
 		# Stopped reading at empty line ... but text exists afterwards (discarded): ...
-		# and not all rows will be read 
-		dataenv$data <- data.table::fread(rawToChar(req$content), sep="\t", header=TRUE, 
-						  showProgress=FALSE,
-						  blank.lines.skip = TRUE)
+		# and not all rows will be read
+	  if (use == "memory") {
+  		dataenv$data <- data.table::fread(rawToChar(req$content), sep="\t", header=TRUE,
+  						  showProgress=FALSE,
+  						  blank.lines.skip = TRUE)
+	  } else {
+	    dataenv$data <- data.table::fread(tmp, sep = "\t", header = TRUE,
+	                                      showProgress = FALSE,
+	                                      blank.lines.skip = TRUE)
+	    unlink(tmp)
+	  }
 	}
 	dataenv$success <- TRUE
 
@@ -109,10 +130,9 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
     )
 })
 
-
-setMethod("dbWriteTable", signature(conn="clickhouse_connection", name = "character", value="ANY"), def=function(conn, name, value, overwrite=FALSE, 
+setMethod("dbWriteTable", signature(conn = "clickhouse_connection", name = "character", value = "ANY"), definition = function(conn, name, value, overwrite=FALSE,
   append=FALSE, engine="TinyLog", ...) {
-   if (is.vector(value) && !is.list(value)) value <- data.frame(x=value, stringsAsFactors=F)
+   if (is.vector(value) && !is.list(value)) value <- data.frame(x = value, stringsAsFactors = F)
   if (length(value) < 1) stop("value must have at least one column")
   if (is.null(names(value))) names(value) <- paste("V", 1:length(value), sep='')
   if (length(value[[1]])>0) {
@@ -123,16 +143,16 @@ setMethod("dbWriteTable", signature(conn="clickhouse_connection", name = "charac
   if (overwrite && append) {
     stop("Setting both overwrite and append to TRUE makes no sense.")
   }
- 
+
   qname <- name
 
   if (dbExistsTable(conn, qname)) {
     if (overwrite) dbRemoveTable(conn, qname)
-    if (!overwrite && !append) stop("Table ", qname, " already exists. Set overwrite=TRUE if you want 
-      to remove the existing table. Set append=TRUE if you would like to add the new data to the 
+    if (!overwrite && !append) stop("Table ", qname, " already exists. Set overwrite=TRUE if you want
+      to remove the existing table. Set append=TRUE if you would like to add the new data to the
       existing table.")
   }
-  
+
   if (!dbExistsTable(conn, qname)) {
     fts <- sapply(value, dbDataType, dbObj=conn)
     fdef <- paste(names(value), fts, collapse=', ')
@@ -160,11 +180,10 @@ setMethod("dbWriteTable", signature(conn="clickhouse_connection", name = "charac
 	}
   }
 
-  
   return(invisible(TRUE))
 })
 
-setMethod("dbDataType", signature(dbObj="clickhouse_connection", obj = "ANY"), def = function(dbObj, 
+setMethod("dbDataType", signature(dbObj="clickhouse_connection", obj = "ANY"), definition = function(dbObj,
                                                                                           obj, ...) {
   if (is.logical(obj)) "UInt8"
   else if (is.integer(obj)) "Int32"
@@ -172,15 +191,15 @@ setMethod("dbDataType", signature(dbObj="clickhouse_connection", obj = "ANY"), d
   else "String"
 }, valueClass = "character")
 
-setMethod("dbBegin", "clickhouse_connection", def=function(conn, ...) {
+setMethod("dbBegin", "clickhouse_connection", definition = function(conn, ...) {
 	stop("Transactions are not supported.")
 })
 
-setMethod("dbCommit", "clickhouse_connection", def=function(conn, ...) {
+setMethod("dbCommit", "clickhouse_connection", definition = function(conn, ...) {
 	stop("Transactions are not supported.")
 })
 
-setMethod("dbRollback", "clickhouse_connection", def=function(conn, ...) {
+setMethod("dbRollback", "clickhouse_connection", definition = function(conn, ...) {
 	stop("Transactions are not supported.")
 })
 
@@ -188,7 +207,7 @@ setMethod("dbDisconnect", "clickhouse_connection", function(conn, ...) {
   invisible(TRUE)
 })
 
-setMethod("fetch", signature(res="clickhouse_result", n="numeric"), def=function(res, n, ...) {
+setMethod("fetch", signature(res = "clickhouse_result", n = "numeric"), definition = function(res, n, ...) {
   if (!dbIsValid(res) || dbHasCompleted(res)) {
     stop("Cannot fetch results from exhausted, closed or invalid response.")
   }
@@ -213,20 +232,20 @@ setMethod("fetch", signature(res="clickhouse_result", n="numeric"), def=function
   }
 })
 
-setMethod("dbGetRowsAffected", "clickhouse_result", def = function(res, ...) {
+setMethod("dbGetRowsAffected", "clickhouse_result", definition = function(res, ...) {
     as.numeric(NA)
 })
 
-setMethod("dbClearResult", "clickhouse_result", def = function(res, ...) {
+setMethod("dbClearResult", "clickhouse_result", definition = function(res, ...) {
     res@env$open <- FALSE
     invisible(TRUE)
 })
 
-setMethod("dbHasCompleted", "clickhouse_result", def = function(res, ...) {
+setMethod("dbHasCompleted", "clickhouse_result", definition = function(res, ...) {
 	res@env$delivered >= res@env$rows
  })
 
-setMethod("dbIsValid", "clickhouse_result", def=function(dbObj, ...) {
+setMethod("dbIsValid", "clickhouse_result", definition = function(dbObj, ...) {
 	dbObj@env$success && dbObj@env$open
 })
 
