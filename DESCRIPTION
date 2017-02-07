@@ -1,5 +1,5 @@
 Package: clickhouse
-Version: 0.0.1
+Version: 0.0.2
 Title: clickhouse Interface for R
 Author: Hannes Muehleisen [aut, cre]
 Maintainer: Hannes Muehleisen <hannes@cwi.nl>
@@ -13,7 +13,7 @@ Imports:
     methods,
     DBI (>= 0.5),
     curl,
-    data.table
+    data.table (>= 1.10.4)
 Encoding: UTF-8
 License: LGPL (>= 2)
 URL: https://github.com/hannesmuehleisen/clickhouse-r
