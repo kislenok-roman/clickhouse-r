@@ -139,8 +139,7 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
           data[[baseData + 3]] <- "Content-Type: text/tab-separated-values"
           data[[baseData + 4]] <- ""
           data[[baseData + 5]] <- paste0(textOutput, collapse = "\n")
-          data[[baseData + 6]] <- paste0("--", DELIMITER, "--")
-          data[[baseData + 7]] <- ""
+          data[[baseData + 6]] <- paste0("--", DELIMITER)
         } else {
           # just additional parameter
           query <- c(query, ext[n])
@@ -148,6 +147,7 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
       }
       
       if (length(data) > 0) {
+        data[[length(data)]] <- paste0(data[[length(data)]], "--")
         data <- paste0(data, collapse = ROWEND)
         curl::handle_setheaders(h, 
                                 "Content-type" = paste0("multipart/form-data; boundary=", DELIMITER),
