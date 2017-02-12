@@ -207,7 +207,7 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
 })
 
 setMethod("dbWriteTable", signature(conn = "clickhouse_connection", name = "character", value = "ANY"), definition = function(conn, name, value, overwrite=FALSE,
-                                                                                                                              append=FALSE, engine="TinyLog", ...) {
+                                                                                                                             append=FALSE, engine="TinyLog", ...) {
   if (is.vector(value) && !is.list(value)) value <- data.frame(x = value, stringsAsFactors = F)
   if (length(value) < 1) stop("value must have at least one column")
   if (is.null(names(value))) names(value) <- paste("V", 1:length(value), sep='')
@@ -219,7 +219,7 @@ setMethod("dbWriteTable", signature(conn = "clickhouse_connection", name = "char
   if (overwrite && append) {
     stop("Setting both overwrite and append to TRUE makes no sense.")
   }
-  
+
   qname <- name
   
   if (dbExistsTable(conn, qname)) {
@@ -228,7 +228,7 @@ setMethod("dbWriteTable", signature(conn = "clickhouse_connection", name = "char
                                     to remove the existing table. Set append=TRUE if you would like to add the new data to the
                                     existing table.")
   }
-  
+
   if (!dbExistsTable(conn, qname)) {
     fts <- sapply(value, dbDataType, dbObj=conn)
     fdef <- paste(names(value), fts, collapse=', ')
@@ -255,9 +255,8 @@ setMethod("dbWriteTable", signature(conn = "clickhouse_connection", name = "char
       stop("Error writing data to table ", rawToChar(req$content))
     }
   }
-  
   return(invisible(TRUE))
-  })
+})
 
 setMethod("dbDataType", signature(dbObj="clickhouse_connection", obj = "ANY"), definition = function(dbObj,
                                                                                                      obj, ...) {
