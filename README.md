@@ -29,10 +29,10 @@ Please note additional features:
 *temporary vs memory to store query results*
 ```R
 con1 <- dbConnect(clickhouse(), host = "localhost", use = "temp") # default
-con2 <- dbConnect(clickhouse(), host = "localhost", use = "memory") # default
+con2 <- dbConnect(clickhouse(), host = "localhost", use = "memory")
 ```
 You always can use temporary file as it's fast and reliable. Also temporary file allow
-to get a lot of data from server. 
+to get a lot of data from server (something up to 10 mln rows if you're lucky). 
 
 *external tables*
 ClickHouse support external tables and you can use such a table in queries:
@@ -41,5 +41,6 @@ dbGetQuery(con, "select a, count() from tbl1 group by a", tbl1 = CJ(a = 1:3, b =
 ```
 You can use such table with join/in, please note that it should be a small table to fit in memory as it uses Memory engine. You could use several tables.
 
-*what's next*
+## what's next
 * using tables from files
+* "C stack usage  ... is too close to the limit - NULL" error from `curl` or `data.table` (I think so, need to test futher) for big queries (1 mln rows if you are not lucky)
