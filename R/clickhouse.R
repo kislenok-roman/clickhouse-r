@@ -130,15 +130,21 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
             }
           }), collapse = ",")), names = paste0(n, "_structure")))
           
-          # Try to use fwrite:
-          textOutput <- capture.output(data.table::fwrite(ext[[n]], sep = "\t", col.names = FALSE))
+          tcon <- textConnection("textOutput", open = "w", local = TRUE)
+          write.table(ext[[n]], tcon, 
+                      sep = "\t", 
+                      row.names = FALSE, 
+                      col.names = FALSE)
+          textOutputValue <- textConnectionValue(tcon)
+          close(tcon)
+          # textOutput <- capture.output(data.table::fwrite(ext[[n]], sep = "\t", col.names = FALSE))
           
           baseData <- length(data)
           data[[baseData + 1]] <- paste0("--", DELIMITER)
           data[[baseData + 2]] <- paste0("Content-Disposition: form-data; name=\"", n, "\"; filename=\"", n, "\".tsv")
           data[[baseData + 3]] <- "Content-Type: text/tab-separated-values"
           data[[baseData + 4]] <- ""
-          data[[baseData + 5]] <- paste0(textOutput, collapse = "\n")
+          data[[baseData + 5]] <- paste0(textOutputValue, collapse = "\n")
           data[[baseData + 6]] <- paste0("--", DELIMITER)
         } else {
           # just additional parameter
