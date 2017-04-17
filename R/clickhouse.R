@@ -2,6 +2,10 @@ setClass("clickhouse_driver",
          contains = "DBIDriver"
 )
 
+# TODO: add database parameter 
+# You can use the 'database' URL parameter to specify the default database.
+# SM: https://clickhouse.yandex/reference_en.html#Settings
+# https://clickhouse.yandex/reference_en.html#SET
 setClass("clickhouse_connection",
          contains = "DBIConnection",
          slots = list(
@@ -29,7 +33,20 @@ setMethod("dbUnloadDriver", "clickhouse_driver", function(drv, ...) {
 
 setMethod("dbIsValid", "clickhouse_connection", function(dbObj, ...) {
   tryCatch({
-    dbGetQuery(dbObj, "select 1")
+    # https://clickhouse.yandex/reference_en.html#HTTP interface
+    # If you make a GET / request without parameters, 
+    # it returns the string "Ok" (with a line break at the end). 
+    # You can use this in health-check scripts.
+    # TODO: use keep-alive handle here with HTTP 1.1
+    d1 <- curl::curl_fetch_memory(dbObj@url)
+    msg <- rawToChar(d1$content)
+    
+    if (d1$status_code == 200L && msg == "Ok.\n") {
+      TRUE
+    } else {
+      print(msg)
+      FALSE
+    }
     TRUE
   }, error = function(e) {
     print(e)
@@ -84,6 +101,7 @@ setMethod("dbRemoveTable", "clickhouse_connection", function(conn, name, ...) {
 })
 
 setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...) {
+  # TODO: put query in POST body
   query <- list(query = sub("[; ]*;\\s*$", "", statement, ignore.case = TRUE, perl = TRUE))
   ext <- list(...)
   
