@@ -2,7 +2,7 @@ setClass("clickhouse_driver",
          contains = "DBIDriver"
 )
 
-# TODO: add database parameter 
+# TODO: add database parameter
 # You can use the 'database' URL parameter to specify the default database.
 # SM: https://clickhouse.yandex/reference_en.html#Settings
 # https://clickhouse.yandex/reference_en.html#SET
@@ -34,13 +34,13 @@ setMethod("dbUnloadDriver", "clickhouse_driver", function(drv, ...) {
 setMethod("dbIsValid", "clickhouse_connection", function(dbObj, ...) {
   tryCatch({
     # https://clickhouse.yandex/reference_en.html#HTTP interface
-    # If you make a GET / request without parameters, 
-    # it returns the string "Ok" (with a line break at the end). 
+    # If you make a GET / request without parameters,
+    # it returns the string "Ok" (with a line break at the end).
     # You can use this in health-check scripts.
     # TODO: use keep-alive handle here with HTTP 1.1
     d1 <- curl::curl_fetch_memory(dbObj@url)
     msg <- rawToChar(d1$content)
-    
+
     if (d1$status_code == 200L && msg == "Ok.\n") {
       TRUE
     } else {
@@ -58,8 +58,8 @@ clickhouse <- function() {
   new("clickhouse_driver")
 }
 
-setMethod("dbConnect", "clickhouse_driver", function(drv, host = "localhost", 
-                                                     port = 8123L, user = "default", password="", 
+setMethod("dbConnect", "clickhouse_driver", function(drv, host = "localhost",
+                                                     port = 8123L, user = "default", password="",
                                                      use = c("file", "memory"), ...) {
   use <- match.arg(use)
   con <- new("clickhouse_connection",
@@ -79,7 +79,7 @@ setMethod("dbExistsTable", "clickhouse_connection", function(conn, name, ...) {
   as.logical(name %in% dbListTables(conn))
 })
 
-setMethod("dbReadTable", "clickhouse_connection", function(conn, name, 
+setMethod("dbReadTable", "clickhouse_connection", function(conn, name,
                                                            limit = NULL, ...) {
   if (is.numeric(limit)) {
     if (limit > 1) {
@@ -104,18 +104,18 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
   # TODO: put query in POST body
   query <- list(query = sub("[; ]*;\\s*$", "", statement, ignore.case = TRUE, perl = TRUE))
   ext <- list(...)
-  
+
   has_resultset <- grepl("^\\s*(SELECT|SHOW)\\s+", query$query, perl = TRUE, ignore.case = TRUE)
-  
+
   if (has_resultset) {
     if (grepl(".*FORMAT\\s+\\w+\\s*$", statement, perl = TRUE, ignore.case = TRUE)) {
       stop("Can't have FORMAT keyword in queries, query ", statement)
     }
     query$query <- paste0(query$query ," FORMAT TabSeparatedWithNames")
   }
-  
+
   h <- curl::new_handle()
-  
+
   if (length(ext) > 0) {
     # We have more then query - there could be:
     # 1. additional set params to ClickHouse server
@@ -124,19 +124,19 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
     if (!is.null(names(ext)) && anyDuplicated(names(ext)) == 0) {
       DELIMITER <- "AaB03x"
       ROWEND <- "\r\n"
-      CLASSES <- c("integer" = "Int32", 
-                   "numeric" = "Float64", 
+      CLASSES <- c("integer" = "Int32",
+                   "numeric" = "Float64",
                    "character" = "String",
                    "Date" = "Date",
                    "POSIXct" = "DateTime")
-      
+
       data <- list()
-      
+
       for (n in names(ext)) {
         if (is.data.frame(ext[[n]])) {
           # external data
           c1 <- lapply(ext[[n]], class)
-          
+
           # We provide to server it's format & structure
           query <- c(query, structure(list("TabSeparated"), names = paste0(n, "_format")))
           query <- c(query, structure(list(paste0(names(c1), " ", sapply(c1, function(d) {
@@ -147,16 +147,17 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
               "String" # fallback
             }
           }), collapse = ",")), names = paste0(n, "_structure")))
-          
+
           tcon <- textConnection("textOutput", open = "w", local = TRUE)
-          write.table(ext[[n]], tcon, 
-                      sep = "\t", 
-                      row.names = FALSE, 
-                      col.names = FALSE)
+          write.table(ext[[n]], tcon,
+                      sep = "\t",
+                      row.names = FALSE,
+                      col.names = FALSE,
+                      quote = FALSE)
           textOutputValue <- textConnectionValue(tcon)
           close(tcon)
           # textOutput <- capture.output(data.table::fwrite(ext[[n]], sep = "\t", col.names = FALSE))
-          
+
           baseData <- length(data)
           data[[baseData + 1]] <- paste0("--", DELIMITER)
           data[[baseData + 2]] <- paste0("Content-Disposition: form-data; name=\"", n, "\"; filename=\"", n, "\".tsv")
@@ -169,11 +170,11 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
           query <- c(query, ext[n])
         }
       }
-      
+
       if (length(data) > 0) {
         data[[length(data)]] <- paste0(data[[length(data)]], "--")
         data <- paste0(data, collapse = ROWEND)
-        curl::handle_setheaders(h, 
+        curl::handle_setheaders(h,
                                 "Content-type" = paste0("multipart/form-data; boundary=", DELIMITER),
                                 "Content-Length" = as.character(nchar(data)))
         curl::handle_setopt(h, post = TRUE, customrequest = "POST", postfields = data)
@@ -182,16 +183,16 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
       stop("Can't use external parameters. Each should be named and there are should be no duplicates")
     }
   }
-  
+
   query <- paste0(names(query), "=", curl::curl_escape(unlist(query)), collapse = "&")
-  
+
   if (conn@use == "memory") {
     req <- curl::curl_fetch_memory(paste0(conn@url, "?", query), handle = h)
   } else {
     tmp <- tempfile()
     req <- curl::curl_fetch_disk(paste0(conn@url, "?", query), tmp, handle = h)
   }
-  
+
   if (req$status_code != 200) {
     if (conn@use == "memory") {
       stop(rawToChar(req$content))
@@ -199,7 +200,7 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
       stop(readLines(tmp))
     }
   }
-  
+
   dataenv <- new.env(parent = emptyenv())
   if (has_resultset) {
     # try to avoid problems when select just one column that can contain ""
@@ -218,11 +219,11 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
     }
   }
   dataenv$success <- TRUE
-  
+
   dataenv$delivered <- -1
   dataenv$open <- TRUE
   dataenv$rows <- nrow(dataenv$data)
-  
+
   new("clickhouse_result",
       sql = statement,
       env = dataenv,
@@ -245,7 +246,7 @@ setMethod("dbWriteTable", signature(conn = "clickhouse_connection", name = "char
   }
 
   qname <- name
-  
+
   if (dbExistsTable(conn, qname)) {
     if (overwrite) dbRemoveTable(conn, qname)
     if (!overwrite && !append) stop("Table ", qname, " already exists. Set overwrite=TRUE if you want
@@ -271,7 +272,7 @@ setMethod("dbWriteTable", signature(conn = "clickhouse_connection", name = "char
     }
     write.table(value, textConnection("value_str", open="w"), sep="\t", row.names=F, col.names=F)
     value_str2 <- paste0(get("value_str"), collapse="\n")
-    
+
     h <- curl::new_handle()
     curl::handle_setopt(h, copypostfields = value_str2)
     req <- curl::curl_fetch_memory(paste0(conn@url, "?query=",URLencode(paste0("INSERT INTO ", qname, " FORMAT TabSeparated"))), handle = h)
