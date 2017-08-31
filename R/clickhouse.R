@@ -101,7 +101,6 @@ setMethod("dbRemoveTable", "clickhouse_connection", function(conn, name, ...) {
 })
 
 setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...) {
-  # TODO: put query in POST body
   query <- list(query = sub("[; ]*;\\s*$", "", statement, ignore.case = TRUE, perl = TRUE))
   ext <- list(...)
 
@@ -114,6 +113,14 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
     query$query <- paste0(query$query ," FORMAT TabSeparatedWithNames")
   }
 
+  if (nchar(query$query) > 15 * 1000) {
+    # long query need to be put in the body
+    longQuery <- query$query
+    query$query <- NULL
+  } else {
+    longQuery <- NULL
+  }
+
   h <- curl::new_handle()
 
   if (length(ext) > 0) {
@@ -122,7 +129,7 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
     # 2. additional external tables to use in query
     # 3. some thing user put by error
     if (!is.null(names(ext)) && anyDuplicated(names(ext)) == 0) {
-      DELIMITER <- "AaB03x"
+      DELIMITER <- digest::digest(Sys.time(), "md5")
       ROWEND <- "\r\n"
       CLASSES <- c("integer" = "Int32",
                    "numeric" = "Float64",
@@ -134,6 +141,10 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
 
       for (n in names(ext)) {
         if (is.data.frame(ext[[n]])) {
+          if (!is.null(longQuery)) {
+            stop("unfortunately we can't use ext data and long queries... check https://github.com/yandex/ClickHouse/issues/1179")
+          }
+
           # external data
           c1 <- lapply(ext[[n]], class)
 
@@ -159,12 +170,12 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
           # textOutput <- capture.output(data.table::fwrite(ext[[n]], sep = "\t", col.names = FALSE))
 
           baseData <- length(data)
-          data[[baseData + 1]] <- paste0("--", DELIMITER)
-          data[[baseData + 2]] <- paste0("Content-Disposition: form-data; name=\"", n, "\"; filename=\"", n, "\".tsv")
-          data[[baseData + 3]] <- "Content-Type: text/tab-separated-values"
-          data[[baseData + 4]] <- ""
-          data[[baseData + 5]] <- paste0(textOutputValue, collapse = "\n")
-          data[[baseData + 6]] <- paste0("--", DELIMITER)
+          data[[baseData + 1L]] <- paste0("--", DELIMITER)
+          data[[baseData + 2L]] <- paste0("Content-Disposition: form-data; name=\"", n, "\"; filename=\"", n, "\".tsv")
+          data[[baseData + 3L]] <- "Content-Type: text/tab-separated-values"
+          data[[baseData + 4L]] <- ""
+          data[[baseData + 5L]] <- paste0(textOutputValue, collapse = "\n")
+          data[[baseData + 6L]] <- paste0("--", DELIMITER)
         } else {
           # just additional parameter
           query <- c(query, ext[n])
@@ -184,13 +195,22 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
     }
   }
 
-  query <- paste0(names(query), "=", curl::curl_escape(unlist(query)), collapse = "&")
+  if (!is.null(longQuery)) {
+    curl::handle_setopt(h, post = TRUE, customrequest = "POST", postfields = longQuery)
+  }
+
+  if (length(query) > 0) {
+    query <- paste0(names(query), "=", curl::curl_escape(unlist(query)), collapse = "&")
+    url <- paste0(conn@url, "?", query)
+  } else {
+    url <- conn@url
+  }
 
   if (conn@use == "memory") {
-    req <- curl::curl_fetch_memory(paste0(conn@url, "?", query), handle = h)
+    req <- curl::curl_fetch_memory(url, handle = h)
   } else {
     tmp <- tempfile()
-    req <- curl::curl_fetch_disk(paste0(conn@url, "?", query), tmp, handle = h)
+    req <- curl::curl_fetch_disk(url, tmp, handle = h)
   }
 
   if (req$status_code != 200) {
