@@ -251,15 +251,28 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
   )
 })
 
-setMethod("dbWriteTable", signature(conn = "clickhouse_connection", name = "character", value = "ANY"), definition = function(conn, name, value, overwrite=FALSE,
-                                                                                                                             append=FALSE, engine="TinyLog", ...) {
-  if (is.vector(value) && !is.list(value)) value <- data.frame(x = value, stringsAsFactors = F)
-  if (length(value) < 1) stop("value must have at least one column")
-  if (is.null(names(value))) names(value) <- paste("V", 1:length(value), sep='')
-  if (length(value[[1]])>0) {
-    if (!is.data.frame(value)) value <- as.data.frame(value, row.names=1:length(value[[1]]) , stringsAsFactors=F)
+setMethod("dbWriteTable",
+          signature(conn = "clickhouse_connection",
+                    name = "character",
+                    value = "ANY"),
+          definition = function(conn, name, value, overwrite = FALSE, append=FALSE, engine="TinyLog", ...) {
+  if (is.vector(value) && !is.list(value)) {
+    value <- data.frame(x = value, stringsAsFactors = F)
+  } else if (length(value) < 1) {
+    stop("value must have at least one column")
   } else {
-    if (!is.data.frame(value)) value <- as.data.frame(value, stringsAsFactors=F)
+    if (is.null(names(value))) {
+      names(value) <- paste0("V", 1:length(value))
+    }
+    if (length(value[[1]]) > 0) {
+      if (!is.data.frame(value)) {
+        value <- as.data.frame(value, row.names = 1:length(value[[1]]), stringsAsFactors=F)
+      }
+    } else {
+      if (!is.data.frame(value)) {
+        value <- as.data.frame(value, stringsAsFactors=F)
+      }
+    }
   }
   if (overwrite && append) {
     stop("Setting both overwrite and append to TRUE makes no sense.")
@@ -290,8 +303,14 @@ setMethod("dbWriteTable", signature(conn = "clickhouse_connection", name = "char
     for (c in names(classes[classes=="factor"])) {
       levels(value[[c]]) <- enc2utf8(levels(value[[c]]))
     }
-    write.table(value, textConnection("value_str", open="w"), sep="\t", row.names=F, col.names=F)
-    value_str2 <- paste0(get("value_str"), collapse="\n")
+    write.table(
+      value,
+      textConnection("value_str", open = "w", local = TRUE),
+      quote = FALSE, # "without enclosing quotation marks" https://clickhouse.yandex/docs/en/single/index.html#tabseparated
+      sep = "\t",
+      row.names = FALSE,
+      col.names = FALSE)
+    value_str2 <- paste0(get("value_str"), collapse = "\n")
 
     h <- curl::new_handle()
     curl::handle_setopt(h, copypostfields = value_str2)
@@ -300,7 +319,7 @@ setMethod("dbWriteTable", signature(conn = "clickhouse_connection", name = "char
       stop("Error writing data to table ", rawToChar(req$content))
     }
   }
-  return(invisible(TRUE))
+  invisible(TRUE)
 })
 
 setMethod("dbDataType", signature(dbObj="clickhouse_connection", obj = "ANY"), definition = function(dbObj,
