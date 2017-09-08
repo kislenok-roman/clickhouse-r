@@ -10,7 +10,9 @@ setClass("clickhouse_connection",
          contains = "DBIConnection",
          slots = list(
            url = "character",
-           use = "character"
+           use = "character",
+           auth = "list",
+           params = "list"
          )
 )
 
@@ -37,19 +39,20 @@ setMethod("dbIsValid", "clickhouse_connection", function(dbObj, ...) {
     # If you make a GET / request without parameters,
     # it returns the string "Ok" (with a line break at the end).
     # You can use this in health-check scripts.
-    # TODO: use keep-alive handle here with HTTP 1.1
-    d1 <- curl::curl_fetch_memory(dbObj@url)
-    msg <- rawToChar(d1$content)
+    http <- prepareConnection(dbObj)
 
-    if (d1$status_code == 200L && msg == "Ok.\n") {
+    response <- curl::curl_fetch_memory(http$url, http$handle)
+    msg <- rawToChar(response$content)
+
+    if (response$status_code == 200L && msg == "Ok.\n") {
       TRUE
     } else {
-      print(msg)
+      warning(msg)
       FALSE
     }
     TRUE
   }, error = function(e) {
-    print(e)
+    warning(e)
     FALSE
   })
 })
@@ -59,17 +62,32 @@ clickhouse <- function() {
 }
 
 setMethod("dbConnect", "clickhouse_driver", function(drv, host = "localhost",
-                                                     port = 8123L, user = "default", password="",
+                                                     port = 8123L, user = "default", password = "",
+                                                     database = NULL,
                                                      use = c("file", "memory"), ...) {
   use <- match.arg(use)
-  con <- new("clickhouse_connection",
-             url = paste0("http://", user, ":", password, "@", host, ":", port, "/"),
-             use = use
+  url <- paste0("http://", host, ":", port, "/")
+  params <- list(...)
+  auth <- list()
+  if (length(params) > 0 && is.null(names(params))) {
+    stop("Only named additional params allowed")
+  }
+  auth[["user"]] <- user
+  auth[["password"]] <- password
+  if (!missing(database) && !is.null(database) && !is.na(database) && database != "") {
+    params[["database"]] = database
+  }
+
+  con <- new(
+    "clickhouse_connection",
+    url = url,
+    use = use,
+    params = params,
+    auth = auth
   )
   stopifnot(dbIsValid(con))
   con
-}
-)
+})
 
 setMethod("dbListTables", "clickhouse_connection", function(conn, ...) {
   as.character(dbGetQuery(conn, "SHOW TABLES")[[1]])
@@ -113,104 +131,37 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
     query$query <- paste0(query$query ," FORMAT TabSeparatedWithNames")
   }
 
-  if (nchar(query$query) > 15 * 1000) {
-    # long query need to be put in the body
-    longQuery <- query$query
-    query$query <- NULL
-  } else {
-    longQuery <- NULL
-  }
-
-  h <- curl::new_handle()
-
   if (length(ext) > 0) {
     # We have more then query - there could be:
     # 1. additional set params to ClickHouse server
     # 2. additional external tables to use in query
     # 3. some thing user put by error
     if (!is.null(names(ext)) && anyDuplicated(names(ext)) == 0) {
-      DELIMITER <- digest::digest(Sys.time(), "md5")
-      ROWEND <- "\r\n"
-      CLASSES <- c("integer" = "Int32",
-                   "numeric" = "Float64",
-                   "character" = "String",
-                   "Date" = "Date",
-                   "POSIXct" = "DateTime")
-
       data <- list()
 
-      for (n in names(ext)) {
-        if (is.data.frame(ext[[n]])) {
-          if (!is.null(longQuery)) {
-            stop("unfortunately we can't use ext data and long queries... check https://github.com/yandex/ClickHouse/issues/1179")
-          }
-
+      for (name in names(ext)) {
+        if (is.data.frame(ext[[name]])) {
           # external data
-          c1 <- lapply(ext[[n]], class)
-
-          # We provide to server it's format & structure
-          query <- c(query, structure(list("TabSeparated"), names = paste0(n, "_format")))
-          query <- c(query, structure(list(paste0(names(c1), " ", sapply(c1, function(d) {
-            f <- na.omit(CLASSES[d])
-            if (length(f) > 0) {
-              f[1]
-            } else {
-              "String" # fallback
-            }
-          }), collapse = ",")), names = paste0(n, "_structure")))
-
-          tcon <- textConnection("textOutput", open = "w", local = TRUE)
-          write.table(ext[[n]], tcon,
-                      sep = "\t",
-                      row.names = FALSE,
-                      col.names = FALSE,
-                      quote = FALSE)
-          textOutputValue <- textConnectionValue(tcon)
-          close(tcon)
-          # textOutput <- capture.output(data.table::fwrite(ext[[n]], sep = "\t", col.names = FALSE))
-
-          baseData <- length(data)
-          data[[baseData + 1L]] <- paste0("--", DELIMITER)
-          data[[baseData + 2L]] <- paste0("Content-Disposition: form-data; name=\"", n, "\"; filename=\"", n, "\".tsv")
-          data[[baseData + 3L]] <- "Content-Type: text/tab-separated-values"
-          data[[baseData + 4L]] <- ""
-          data[[baseData + 5L]] <- paste0(textOutputValue, collapse = "\n")
-          data[[baseData + 6L]] <- paste0("--", DELIMITER)
+          data[[name]] <- ext[[name]]
         } else {
           # just additional parameter
-          query <- c(query, ext[n])
+          query <- c(query, ext[name])
         }
-      }
-
-      if (length(data) > 0) {
-        data[[length(data)]] <- paste0(data[[length(data)]], "--")
-        data <- paste0(data, collapse = ROWEND)
-        curl::handle_setheaders(h,
-                                "Content-type" = paste0("multipart/form-data; boundary=", DELIMITER),
-                                "Content-Length" = as.character(nchar(data)))
-        curl::handle_setopt(h, post = TRUE, customrequest = "POST", postfields = data)
       }
     } else {
       stop("Can't use external parameters. Each should be named and there are should be no duplicates")
     }
-  }
-
-  if (!is.null(longQuery)) {
-    curl::handle_setopt(h, post = TRUE, customrequest = "POST", postfields = longQuery)
-  }
-
-  if (length(query) > 0) {
-    query <- paste0(names(query), "=", curl::curl_escape(unlist(query)), collapse = "&")
-    url <- paste0(conn@url, "?", query)
   } else {
-    url <- conn@url
+    data <- NULL
   }
+
+  http <- prepareConnection(conn, query, NULL, data)
 
   if (conn@use == "memory") {
-    req <- curl::curl_fetch_memory(url, handle = h)
+    req <- curl::curl_fetch_memory(http$url, http$handle)
   } else {
     tmp <- tempfile()
-    req <- curl::curl_fetch_disk(url, tmp, handle = h)
+    req <- curl::curl_fetch_disk(http$url, tmp, http$handle)
   }
 
   if (req$status_code != 200) {
@@ -222,24 +173,25 @@ setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...)
   }
 
   dataenv <- new.env(parent = emptyenv())
+
   if (has_resultset) {
     # try to avoid problems when select just one column that can contain ""
     # without "blank.lines.skip" we'll get warning:
     # Stopped reading at empty line ... but text exists afterwards (discarded): ...
     # and not all rows will be read
     if (conn@use == "memory") {
-      dataenv$data <- data.table::fread(rawToChar(req$content), sep="\t", header=TRUE,
-                                        showProgress=FALSE,
-                                        blank.lines.skip = TRUE)
-    } else {
-      dataenv$data <- data.table::fread(tmp, sep = "\t", header = TRUE,
-                                        showProgress = FALSE,
-                                        blank.lines.skip = TRUE)
+      tmp <- rawToChar(req$content)
+    }
+    dataenv$data <- data.table::fread(tmp, sep = "\t",
+                                      header = TRUE,
+                                      showProgress = FALSE,
+                                      blank.lines.skip = TRUE)
+    if (conn@use == "file") {
       unlink(tmp)
     }
   }
-  dataenv$success <- TRUE
 
+  dataenv$success <- TRUE
   dataenv$delivered <- -1
   dataenv$open <- TRUE
   dataenv$rows <- nrow(dataenv$data)
@@ -255,79 +207,71 @@ setMethod("dbWriteTable",
           signature(conn = "clickhouse_connection",
                     name = "character",
                     value = "ANY"),
-          definition = function(conn, name, value, overwrite = FALSE, append=FALSE, engine="TinyLog", ...) {
-  if (is.vector(value) && !is.list(value)) {
-    value <- data.frame(x = value, stringsAsFactors = F)
-  } else if (length(value) < 1) {
-    stop("value must have at least one column")
-  } else {
-    if (is.null(names(value))) {
-      names(value) <- paste0("V", 1:length(value))
-    }
-    if (length(value[[1]]) > 0) {
-      if (!is.data.frame(value)) {
-        value <- as.data.frame(value, row.names = 1:length(value[[1]]), stringsAsFactors=F)
-      }
-    } else {
-      if (!is.data.frame(value)) {
-        value <- as.data.frame(value, stringsAsFactors=F)
-      }
-    }
-  }
+          definition = function(conn, name, value, overwrite = FALSE, append = FALSE, engine = "TinyLog", ...) {
   if (overwrite && append) {
     stop("Setting both overwrite and append to TRUE makes no sense.")
   }
-
-  qname <- name
-
-  if (dbExistsTable(conn, qname)) {
-    if (overwrite) dbRemoveTable(conn, qname)
-    if (!overwrite && !append) stop("Table ", qname, " already exists. Set overwrite=TRUE if you want
-                                    to remove the existing table. Set append=TRUE if you would like to add the new data to the
-                                    existing table.")
+  if (!is.data.frame(value)) {
+    value <- data.table::as.data.table(value)
   }
 
-  if (!dbExistsTable(conn, qname)) {
-    fts <- sapply(value, dbDataType, dbObj=conn)
-    fdef <- paste(names(value), fts, collapse=', ')
-    ct <- paste0("CREATE TABLE ", qname, " (", fdef, ") ENGINE=", engine)
-    dbExecute(conn, ct)
-  }
-  if (length(value[[1]])) {
-    classes <- unlist(lapply(value, function(v){
-      class(v)[[1]]
-    }))
-    for (c in names(classes[classes=="character"])) {
-      value[[c]] <- enc2utf8(value[[c]])
-    }
-    for (c in names(classes[classes=="factor"])) {
-      levels(value[[c]]) <- enc2utf8(levels(value[[c]]))
-    }
-    write.table(
-      value,
-      textConnection("value_str", open = "w", local = TRUE),
-      quote = FALSE, # "without enclosing quotation marks" https://clickhouse.yandex/docs/en/single/index.html#tabseparated
-      sep = "\t",
-      row.names = FALSE,
-      col.names = FALSE)
-    value_str2 <- paste0(get("value_str"), collapse = "\n")
+  if (nrow(value) > 0) {
+    isTableExists <- dbExistsTable(conn, name)
 
-    h <- curl::new_handle()
-    curl::handle_setopt(h, copypostfields = value_str2)
-    req <- curl::curl_fetch_memory(paste0(conn@url, "?query=",URLencode(paste0("INSERT INTO ", qname, " FORMAT TabSeparated"))), handle = h)
-    if (req$status_code != 200) {
+    if (isTableExists) {
+      if (overwrite) {
+        warning("Clickhouse does not support deletition or truncation at all. ",
+                "There are possible solution: create a copy of this table without ",
+                "data (to preserve structure), drop this table, take another copy ",
+                "(to preserve name), drop temporary table. But currently we just ",
+                "remove & create new one")
+        # TODO: implement proposal solution
+        dbRemoveTable(conn, name)
+        isTableExists <- FALSE
+      } else if (!append) {
+        stop("Table ", name, " already exists. Set overwrite = TRUE if you want to ",
+             "remove the existing table. Set append=TRUE if you would like to add ",
+             "the new data to the existing table.")
+      }
+    }
+
+    if (!isTableExists) {
+      if (missing(engine)) {
+        warning("Using default engine TinyLog, try to set MergeTree as engine as it's preferable (but read docs before).")
+      }
+      cols <- paste(names(value), sapply(head(value), dbDataType, dbObj = conn), collapse = ",")
+      dbExecute(conn, paste0("create table ", name, " (", cols, ") engine = ", engine))
+    }
+
+    http <- prepareConnection(conn, paste0("insert into ", name, " format TabSeparated"), value)
+    request <- curl::curl_fetch_memory(http$url, http$handle)
+    if (request$status_code != 200) {
       stop("Error writing data to table ", rawToChar(req$content))
+    } else {
+      invisible(TRUE)
     }
+  } else {
+    stop("There are no rows to write")
   }
-  invisible(TRUE)
 })
 
-setMethod("dbDataType", signature(dbObj="clickhouse_connection", obj = "ANY"), definition = function(dbObj,
-                                                                                                     obj, ...) {
-  if (is.logical(obj)) "UInt8"
-  else if (is.integer(obj)) "Int32"
-  else if (is.numeric(obj)) "Float64"
-  else "String"
+setMethod("dbDataType", signature(dbObj = "clickhouse_connection", obj = "ANY"),
+          definition = function(dbObj, obj, ...) {
+  objClass <- class(obj)[1]
+
+  if (objClass == "logical") {
+    "UInt8"
+  } else if (objClass == "integer") {
+    "Int32"
+  } else if (objClass == "numeric") {
+    "Float64"
+  } else if (objClass == "Date") {
+    "Date"
+  } else if (objClass == "DateTime") {
+    "POSIXct"
+  } else {
+    "String"
+  }
 }, valueClass = "character")
 
 setMethod("dbBegin", "clickhouse_connection", definition = function(conn, ...) {
@@ -347,6 +291,7 @@ setMethod("dbDisconnect", "clickhouse_connection", function(conn, ...) {
 })
 
 setMethod("fetch", signature(res = "clickhouse_result", n = "numeric"), definition = function(res, n, ...) {
+  # TODO: rewrire this
   if (!dbIsValid(res) || dbHasCompleted(res)) {
     stop("Cannot fetch results from exhausted, closed or invalid response.")
   }
@@ -372,6 +317,7 @@ setMethod("fetch", signature(res = "clickhouse_result", n = "numeric"), definiti
 })
 
 setMethod("dbGetRowsAffected", "clickhouse_result", definition = function(res, ...) {
+  # TODO we can return this if we use "Format JSON"
   as.numeric(NA)
 })
 
