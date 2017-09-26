@@ -1,5 +1,5 @@
 Package: clickhouse
-Version: 0.0.4
+Version: 0.0.5
 Title: clickhouse Interface for R
 Author: Hannes Muehleisen [aut, cre], Kislenok Roman
 Maintainer: Hannes Muehleisen <hannes@cwi.nl>, Kislenok Roman <kislenok.roman@gmail.com>

@@ -244,8 +244,8 @@ setMethod("dbWriteTable",
     }
 
     http <- prepareConnection(conn, paste0("insert into ", name, " format TabSeparated"), value)
-    request <- curl::curl_fetch_memory(http$url, http$handle)
-    if (request$status_code != 200) {
+    req <- curl::curl_fetch_memory(http$url, http$handle)
+    if (req$status_code != 200) {
       stop("Error writing data to table ", rawToChar(req$content))
     } else {
       invisible(TRUE)

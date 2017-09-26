@@ -31,7 +31,7 @@ prepareConnection <- function(conn, query = NULL, post = NULL, multiform = NULL)
   if (!is.null(query) && is.character(query)) {
     query <- list(query = query)
   }
-  if (!is.null(query) && !is.null(query[["query"]]) && nchar(query[["query"]]) > 15 * 1000) {
+  if (!is.null(query) && !is.null(query[["query"]]) && nchar(curl::curl_escape(query[["query"]])) > 15 * 1000) {
     # long query need to be put in the body
     if (!is.null(post)) {
       stop("You have a very long query that should be put in post, and already set post with data -- unfortunately ClickHouse http interface does not support this")
