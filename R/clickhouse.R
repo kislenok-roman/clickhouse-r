@@ -12,7 +12,8 @@ setClass("clickhouse_connection",
            url = "character",
            use = "character",
            auth = "list",
-           params = "list"
+           params = "list",
+           cert = "character"
          )
 )
 
@@ -61,33 +62,45 @@ clickhouse <- function() {
   new("clickhouse_driver")
 }
 
-setMethod("dbConnect", "clickhouse_driver", function(drv, host = "localhost",
-                                                     port = 8123L, user = "default", password = "",
-                                                     database = NULL,
-                                                     use = c("file", "memory"), ...) {
-  use <- match.arg(use)
-  url <- paste0("http://", host, ":", port, "/")
-  params <- list(...)
-  auth <- list()
-  if (length(params) > 0 && is.null(names(params))) {
-    stop("Only named additional params allowed")
-  }
-  auth[["user"]] <- user
-  auth[["password"]] <- password
-  if (!missing(database) && !is.null(database) && !is.na(database) && database != "") {
-    params[["database"]] = database
-  }
+setMethod(
+  "dbConnect",
+  "clickhouse_driver",
+  function(drv,
+           host = "localhost", port = 8123L, user = "default", password = "",
+           database = NULL, certPath = NULL,
+           use = c("file", "memory"), ...) {
+    use <- match.arg(use)
+    url <- paste0("http://", host, ":", port, "/")
+    params <- list(...)
+    auth <- list()
+    if (length(params) > 0 && is.null(names(params))) {
+      stop("Only named additional params allowed")
+    }
+    if (!is.null(certPath)) {
+      certPath <- normalizePath(certPath, mustWork = FALSE)
+      if (!file.exists(certPath)) {
+        stop("Certificate file not found")
+      }
+    }
 
-  con <- new(
-    "clickhouse_connection",
-    url = url,
-    use = use,
-    params = params,
-    auth = auth
-  )
-  stopifnot(dbIsValid(con))
-  con
-})
+    auth[["user"]] <- user
+    auth[["password"]] <- password
+    if (!missing(database) && !is.null(database) && !is.na(database) && database != "") {
+      params[["database"]] = database
+    }
+
+    con <- new(
+      "clickhouse_connection",
+      url = url,
+      use = use,
+      params = params,
+      auth = auth,
+      cert = certPath
+    )
+    stopifnot(dbIsValid(con))
+    con
+  }
+)
 
 setMethod("dbListTables", "clickhouse_connection", function(conn, ...) {
   as.character(dbGetQuery(conn, "SHOW TABLES")[[1]])
@@ -118,90 +131,94 @@ setMethod("dbRemoveTable", "clickhouse_connection", function(conn, name, ...) {
   invisible(TRUE)
 })
 
-setMethod("dbSendQuery", "clickhouse_connection", function(conn, statement, ...) {
-  query <- list(query = sub("[; ]*;\\s*$", "", statement, ignore.case = TRUE, perl = TRUE))
-  ext <- list(...)
+setMethod(
+  "dbSendQuery",
+  "clickhouse_connection",
+  function(conn, statement, ...) {
+    query <- list(query = sub("[; ]*;\\s*$", "", statement, ignore.case = TRUE, perl = TRUE))
+    ext <- list(...)
 
-  has_resultset <- grepl("^\\s*(SELECT|SHOW)\\s+", query$query, perl = TRUE, ignore.case = TRUE)
+    has_resultset <- grepl("^\\s*(SELECT|SHOW)\\s+", query$query, perl = TRUE, ignore.case = TRUE)
 
-  if (has_resultset) {
-    if (grepl(".*FORMAT\\s+\\w+\\s*$", statement, perl = TRUE, ignore.case = TRUE)) {
-      stop("Can't have FORMAT keyword in queries, query ", statement)
+    if (has_resultset) {
+      if (grepl(".*FORMAT\\s+\\w+\\s*$", statement, perl = TRUE, ignore.case = TRUE)) {
+        stop("Can't have FORMAT keyword in queries, query ", statement)
+      }
+      query$query <- paste0(query$query ," FORMAT TabSeparatedWithNames")
     }
-    query$query <- paste0(query$query ," FORMAT TabSeparatedWithNames")
-  }
 
-  if (length(ext) > 0) {
-    # We have more then query - there could be:
-    # 1. additional set params to ClickHouse server
-    # 2. additional external tables to use in query
-    # 3. some thing user put by error
-    if (!is.null(names(ext)) && anyDuplicated(names(ext)) == 0) {
-      data <- list()
+    if (length(ext) > 0) {
+      # We have more then query - there could be:
+      # 1. additional set params to ClickHouse server
+      # 2. additional external tables to use in query
+      # 3. some thing user put by error
+      if (!is.null(names(ext)) && anyDuplicated(names(ext)) == 0) {
+        data <- list()
 
-      for (name in names(ext)) {
-        if (is.data.frame(ext[[name]])) {
-          # external data
-          data[[name]] <- ext[[name]]
-        } else {
-          # just additional parameter
-          query <- c(query, ext[name])
+        for (name in names(ext)) {
+          if (is.data.frame(ext[[name]])) {
+            # external data
+            data[[name]] <- ext[[name]]
+          } else {
+            # just additional parameter
+            query <- c(query, ext[name])
+          }
         }
+      } else {
+        stop("Can't use external parameters. Each should be named and there are should be no duplicates")
       }
     } else {
-      stop("Can't use external parameters. Each should be named and there are should be no duplicates")
+      data <- NULL
     }
-  } else {
-    data <- NULL
-  }
 
-  http <- prepareConnection(conn, query, NULL, data)
+    http <- prepareConnection(conn, query, NULL, data)
 
-  if (conn@use == "memory") {
-    req <- curl::curl_fetch_memory(http$url, http$handle)
-  } else {
-    tmp <- tempfile()
-    req <- curl::curl_fetch_disk(http$url, tmp, http$handle)
-  }
-
-  if (req$status_code != 200) {
     if (conn@use == "memory") {
-      stop(rawToChar(req$content))
+      req <- curl::curl_fetch_memory(http$url, http$handle)
     } else {
-      stop(readLines(tmp))
+      tmp <- tempfile()
+      req <- curl::curl_fetch_disk(http$url, tmp, http$handle)
     }
+
+    if (req$status_code != 200) {
+      if (conn@use == "memory") {
+        stop(rawToChar(req$content))
+      } else {
+        stop(readLines(tmp))
+      }
+    }
+
+    dataenv <- new.env(parent = emptyenv())
+
+    if (has_resultset) {
+      # try to avoid problems when select just one column that can contain ""
+      # without "blank.lines.skip" we'll get warning:
+      # Stopped reading at empty line ... but text exists afterwards (discarded): ...
+      # and not all rows will be read
+      if (conn@use == "memory") {
+        tmp <- rawToChar(req$content)
+      }
+      dataenv$data <- data.table::fread(tmp, sep = "\t",
+                                        header = TRUE,
+                                        showProgress = FALSE,
+                                        blank.lines.skip = TRUE)
+      if (conn@use == "file") {
+        unlink(tmp)
+      }
+    }
+
+    dataenv$success <- TRUE
+    dataenv$delivered <- -1
+    dataenv$open <- TRUE
+    dataenv$rows <- nrow(dataenv$data)
+
+    new("clickhouse_result",
+        sql = statement,
+        env = dataenv,
+        conn = conn
+    )
   }
-
-  dataenv <- new.env(parent = emptyenv())
-
-  if (has_resultset) {
-    # try to avoid problems when select just one column that can contain ""
-    # without "blank.lines.skip" we'll get warning:
-    # Stopped reading at empty line ... but text exists afterwards (discarded): ...
-    # and not all rows will be read
-    if (conn@use == "memory") {
-      tmp <- rawToChar(req$content)
-    }
-    dataenv$data <- data.table::fread(tmp, sep = "\t",
-                                      header = TRUE,
-                                      showProgress = FALSE,
-                                      blank.lines.skip = TRUE)
-    if (conn@use == "file") {
-      unlink(tmp)
-    }
-  }
-
-  dataenv$success <- TRUE
-  dataenv$delivered <- -1
-  dataenv$open <- TRUE
-  dataenv$rows <- nrow(dataenv$data)
-
-  new("clickhouse_result",
-      sql = statement,
-      env = dataenv,
-      conn = conn
-  )
-})
+)
 
 setMethod("dbWriteTable",
           signature(conn = "clickhouse_connection",

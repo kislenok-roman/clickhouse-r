@@ -50,8 +50,17 @@ prepareConnection <- function(conn, query = NULL, post = NULL, multiform = NULL)
 
   handle <- curl::new_handle()
 
-  headers <- list("X-ClickHouse-User" = conn@auth[["user"]],
-                  "X-ClickHouse-Key" = conn@auth[["password"]])
+  if (!is.null(conn@cert)) {
+    curl::handle_setopt(
+      handle, cainfo = conn@cert
+    )
+  }
+
+  headers <- list(
+    "X-ClickHouse-User" = conn@auth[["user"]],
+    "X-ClickHouse-Key" = conn@auth[["password"]],
+    "Accept-Encoding" = "gzip"
+  )
 
   if (!is.null(post)) {
     if (is.data.frame(post)) {
