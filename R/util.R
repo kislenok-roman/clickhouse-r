@@ -52,7 +52,10 @@ prepareConnection <- function(conn, query = NULL, post = NULL, multiform = NULL)
 
   if (!is.null(conn@cert)) {
     curl::handle_setopt(
-      handle, cainfo = conn@cert
+      handle,
+      cainfo = conn@cert,
+      ssl_verifypeer = 0,
+      ssl_verifyhost = 0
     )
   }
 

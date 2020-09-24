@@ -13,7 +13,7 @@ setClass("clickhouse_connection",
            use = "character",
            auth = "list",
            params = "list",
-           cert = "character"
+           cert = "ANY"
          )
 )
 
@@ -70,7 +70,7 @@ setMethod(
            database = NULL, certPath = NULL,
            use = c("file", "memory"), ...) {
     use <- match.arg(use)
-    url <- paste0("http://", host, ":", port, "/")
+
     params <- list(...)
     auth <- list()
     if (length(params) > 0 && is.null(names(params))) {
@@ -81,7 +81,12 @@ setMethod(
       if (!file.exists(certPath)) {
         stop("Certificate file not found")
       }
+      protocol <- "https"
+    } else {
+      protocol <- "http"
     }
+    url <- paste0(protocol, "://", host, ":", port, "/")
+
 
     auth[["user"]] <- user
     auth[["password"]] <- password
