@@ -143,7 +143,7 @@ setMethod(
     query <- list(query = sub("[; ]*;\\s*$", "", statement, ignore.case = TRUE, perl = TRUE))
     ext <- list(...)
 
-    has_resultset <- grepl("^\\s*(SELECT|SHOW)\\s+", query$query, perl = TRUE, ignore.case = TRUE)
+    has_resultset <- grepl("^\\s*(WITH|SELECT|SHOW)\\s+", query$query, perl = TRUE, ignore.case = TRUE)
 
     if (has_resultset) {
       if (grepl(".*FORMAT\\s+\\w+\\s*$", statement, perl = TRUE, ignore.case = TRUE)) {
